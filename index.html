@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>DVD Shader Screensaver</title>
+<title>DVD Shader Screensaver - Optimized</title>
 <style>
   html, body {
     margin: 0;
@@ -45,240 +45,105 @@ void main() {
 `;
 
 const fragmentSrc = `
-#extension GL_OES_standard_derivatives : enable
-precision highp float;
+precision mediump float;
 
 uniform vec3 iResolution;
 uniform float iTime;
-uniform sampler2D iChannel0;
-uniform vec3 iChannelResolution[1];
 
-#define PI 3.14159265359
-
-float vmin(vec2 v) {
-    return min(v.x, v.y);
+float sdEllipse(vec2 p, vec2 r) {
+  return (length(p / r) - 1.0) * min(r.x, r.y);
 }
 
-float vmax(vec2 v) {
-    return max(v.x, v.y);
+float sdV(vec2 p) {
+  vec2 q = p;
+  q.y += 0.24;
+  q.x = abs(q.x);
+  float left = dot(q, normalize(vec2(0.9, -1.6)));
+  float right = dot(q, normalize(vec2(-0.2, 1.0)));
+  float top = q.y - 0.55;
+  return max(max(left, right), top);
 }
 
-float ellip(vec2 p, vec2 s) {
-    float m = vmin(s);
-    return (length(p / s) * m) - m;
+float sdD(vec2 p) {
+  float outer = sdEllipse(p, vec2(0.42, 0.28));
+  float inner = sdEllipse(p - vec2(-0.08, 0.0), vec2(0.23, 0.15));
+  float cut = -(p.x + 0.21);
+  return max(max(outer, cut), -inner);
 }
 
-float halfEllip(vec2 p, vec2 s) {
-    p.x = max(0., p.x);
-    float m = vmin(s);
-    return (length(p / s) * m) - m;
+float sdC(vec2 p) {
+  float outer = sdEllipse(p, vec2(0.38, 0.16));
+  float inner = sdEllipse(p, vec2(0.23, 0.08));
+  return max(outer, -inner);
 }
 
-float fBox(vec2 p, vec2 b) {
-    return vmax(abs(p) - b);
+float dvdLogo(vec2 p) {
+  p *= 1.08;
+  float d = 1e5;
+
+  vec2 pv = p + vec2(0.00, -0.03);
+  d = min(d, sdV(pv + vec2(0.46, 0.00)));
+  d = min(d, sdD(pv + vec2(0.08, 0.00)));
+  d = min(d, sdD(vec2(-pv.x + 0.84, pv.y)));
+
+  vec2 pc = p + vec2(0.00, -0.34);
+  d = min(d, sdC(pc + vec2(0.42, 0.00)));
+
+  return d;
 }
 
-float dvd_d(vec2 p) {
-    float d = halfEllip(p, vec2(.8, .5));
-    d = max(d, -p.x - .5);
-    float d2 = halfEllip(p, vec2(.45, .3));
-    d2 = max(d2, min(-p.y + .2, -p.x - .15));
-    d = max(d, -d2);
-    return d;
+vec2 bouncePos(float t, vec2 area, vec2 vel) {
+  vec2 m = mod(vel * t, area * 2.0);
+  return abs(m - area);
 }
 
-float dvd_v(vec2 p) {
-    vec2 pp = p;
-    p.y += .7;
-    p.x = abs(p.x);
-    vec2 a = normalize(vec2(1., -.55));
-    float d = dot(p, a);
-    float d2 = d + .3;
-    p = pp;
-    d = min(d, -p.y + .3);
-    d2 = min(d2, -p.y + .5);
-    d = max(d, -d2);
-    d = max(d, abs(p.x + .3) - 1.1);
-    return d;
-}
-
-float dvd_c(vec2 p) {
-    p.y += .95;
-    float d = ellip(p, vec2(1.8,.25));
-    float d2 = ellip(p, vec2(.45,.09));
-    d = max(d, -d2);
-    return d;
-}
-
-float dvd(vec2 p) {
-    p.y -= .345;
-    p.x -= .035;
-    p *= mat2(1.,-.2,0.,1.);
-    float d = dvd_v(p);
-    d = min(d, dvd_c(p));
-    p.x += 1.3;
-    d = min(d, dvd_d(p));
-    p.x -= 2.4;
-    d = min(d, dvd_d(p));
-    return d;
-}
-
-float range(float vmin_, float vmax_, float value) {
-    return (value - vmin_) / (vmax_ - vmin_);
-}
-
-float rangec(float a, float b, float t) {
-    return clamp(range(a, b, t), 0., 1.);
-}
-
-vec3 pal(in float t, in vec3 a, in vec3 b, in vec3 c, in vec3 d) {
-    return a + b*cos( 6.28318*(c*t+d) );
-}
-
-vec3 spectrum(float n) {
-    return pal(n, vec3(0.5), vec3(0.5), vec3(1.0), vec3(0.0,0.33,0.67));
-}
-
-void drawHit(inout vec4 col, vec2 p, vec2 hitPos, float hitDist) {
-    float d = length(p - hitPos);
-    float wavefront = d - hitDist * 1.5;
-    float freq = 2.0;
-    vec3 spec = (1.0 - spectrum(-wavefront * freq + hitDist * freq));
-    float ripple = sin((wavefront * freq) * PI * 2.0 - PI/2.0);
-
-    float blend = smoothstep(3.0, 0.0, hitDist);
-    blend *= smoothstep(.2, -.5, wavefront);
-    blend *= rangec(-4.0, .0, wavefront);
-
-    col.rgb *= mix(vec3(1.0), spec, pow(blend, 4.0));
-    float height = (ripple * blend);
-    col.a -= height * 1.9 / freq;
-}
-
-vec2 ref(vec2 p, vec2 planeNormal, float offset) {
-    float t = dot(p, planeNormal) + offset;
-    p -= (2.0 * t) * planeNormal;
-    return p;
-}
-
-void drawReflectedHit(inout vec4 col, vec2 p, vec2 hitPos, float hitDist, vec2 screenSize) {
-    col.a += length(p) * .0001;
-    drawHit(col, p, ref(hitPos, vec2(0.,1.), 1.0), hitDist);
-    drawHit(col, p, ref(hitPos, vec2(0.,-1.), 1.0), hitDist);
-    drawHit(col, p, ref(hitPos, vec2(1.,0.), screenSize.x/screenSize.y), hitDist);
-    drawHit(col, p, ref(hitPos, vec2(-1.,0.), screenSize.x/screenSize.y), hitDist);
-}
-
-void flip(inout vec2 pos) {
-    vec2 flipv = mod(floor(pos), 2.0);
-    pos = abs(flipv - mod(pos, 1.0));
-}
-
-float stepSign(float a) {
-    return step(0.0, a) * 2.0 - 1.0;
-}
-
-vec2 compassDir(vec2 p) {
-    vec2 a = vec2(stepSign(p.x), 0.0);
-    vec2 b = vec2(0.0, stepSign(p.y));
-    float s = stepSign(p.x - p.y) * stepSign(-p.x - p.y);
-    return mix(a, b, s * .5 + .5);
-}
-
-vec2 calcHitPos(vec2 move, vec2 dir, vec2 size) {
-    vec2 hitPos = mod(move, 1.0);
-    vec2 xCross = hitPos - hitPos.x / (size / size.x) * (dir / dir.x);
-    vec2 yCross = hitPos - hitPos.y / (size / size.y) * (dir / dir.y);
-    hitPos = max(xCross, yCross);
-    hitPos += floor(move);
-    return hitPos;
-}
-
-void mainImage(out vec4 fragColor, in vec2 fragCoord) {
-    vec2 p = (-iResolution.xy + 2.0 * fragCoord) / iResolution.y;
-    vec2 screenSize = vec2(iResolution.x / iResolution.y, 1.0) * 2.0;
-
-    float t = iTime;
-    vec2 dir = normalize(vec2(9.0, 16.0) * screenSize);
-    vec2 move = dir * t / 1.5;
-    float logoScale = .1;
-    vec2 logoSize = vec2(2.0,.85) * logoScale;
-    vec2 size = screenSize - logoSize * 2.0;
-
-    move = move / size + .5;
-
-    vec2 lastHitPos = calcHitPos(move, dir, size);
-    vec4 col = vec4(1.0,1.0,1.0,0.0);
-    vec4 colFx = vec4(1.0,1.0,1.0,0.0);
-    vec4 colFy = vec4(1.0,1.0,1.0,0.0);
-    vec2 e = vec2(.8,0.0) / iResolution.y;
-
-    const int limit = 5;
-
-    for (int i = 0; i < limit; i++) {
-        vec2 hitPos = lastHitPos;
-
-        if (i > 0) {
-            hitPos = calcHitPos(hitPos - .00001 / size, dir, size);
-        }
-
-        lastHitPos = hitPos;
-        float hitDist = distance(hitPos, move);
-        flip(hitPos);
-        hitPos = (hitPos - .5) * size;
-        hitPos += logoSize * compassDir(hitPos / size);
-
-        drawReflectedHit(col, p, hitPos, hitDist, screenSize);
-        drawReflectedHit(colFx, p + e, hitPos, hitDist, screenSize);
-        drawReflectedHit(colFy, p + e.yx, hitPos, hitDist, screenSize);
-    }
-
-    flip(move);
-    move = (move - .5) * size;
-
-    float bf = .1;
-    float fx = (col.a - colFx.a) * 2.0;
-    float fy = (col.a - colFy.a) * 2.0;
-    vec3 nor = normalize(vec3(fx, fy, e.x / bf));
-    float ff = length(vec2(fx, fy));
-    float ee = rangec(0.0, 10.0 / iResolution.y, ff);
-    nor = normalize(vec3(vec2(fx, fy) * ee, ff));
-
-    col.rgb = clamp(1.0 - col.rgb, vec3(0.0), vec3(1.0));
-    col.rgb /= 3.0;
-
-    vec3 lig = normalize(vec3(1.0,2.0,2.0));
-    vec3 rd = normalize(vec3(p, -10.0));
-    vec3 hal = normalize(lig - rd);
-
-    float dif = clamp(dot(lig, nor), 0.0, 1.0);
-    float spe = pow(clamp(dot(nor, hal), 0.0, 1.0), 16.0) *
-                dif *
-                (0.04 + 0.96 * pow(clamp(1.0 + dot(hal, rd), 0.0, 1.0), 5.0));
-
-    vec3 lin = vec3(0.0);
-    lin += 5.0 * dif;
-    lin += .2;
-    col.rgb = col.rgb * lin;
-    col.rgb += 5.0 * spe;
-
-    float d = dvd((p - move) / logoScale);
-    d /= fwidth(d);
-    d = 1.0 - clamp(d, 0.0, 1.0);
-    col.rgb = mix(col.rgb, vec3(1.0), d);
-
-    col += (texture2D(iChannel0, fragCoord / iChannelResolution[0].xy) * 2.0 - 1.0) * .005;
-    col.rgb = pow(col.rgb, vec3(1.0 / 1.5));
-
-    col.a = col.a * .5 + .5;
-    col.a *= .3;
-    fragColor = col;
+vec3 palette(float t) {
+  return 0.55 + 0.45 * cos(6.28318 * (vec3(0.0, 0.33, 0.67) + t));
 }
 
 void main() {
-    vec4 color;
-    mainImage(color, gl_FragCoord.xy);
-    gl_FragColor = color;
+  vec2 uv = gl_FragCoord.xy / iResolution.xy;
+  vec2 aspect = vec2(iResolution.x / iResolution.y, 1.0);
+  vec2 p = (uv - 0.5) * 2.0 * aspect;
+
+  vec3 col = vec3(0.0);
+
+  float bgWave = 0.5 + 0.5 * sin(iTime * 0.45 + p.x * 2.0 + p.y * 1.4);
+  col += vec3(0.015, 0.02, 0.03) * bgWave;
+
+  vec2 area = vec2(aspect.x - 0.34, 1.0 - 0.20);
+  vec2 vel = vec2(0.62, 0.46);
+
+  vec2 pos0 = bouncePos(iTime, area, vel) - area * 0.5;
+  vec2 pos1 = bouncePos(iTime - 0.16, area, vel) - area * 0.5;
+  vec2 pos2 = bouncePos(iTime - 0.32, area, vel) - area * 0.5;
+
+  vec2 q0 = p - pos0;
+  vec2 q1 = p - pos1;
+  vec2 q2 = p - pos2;
+
+  float d0 = dvdLogo(q0 / 0.22);
+  float d1 = dvdLogo(q1 / 0.22);
+  float d2 = dvdLogo(q2 / 0.22);
+
+  vec3 base = palette(iTime * 0.10 + pos0.x * 0.2 + pos0.y * 0.15);
+  vec3 glow = base * 0.35 / (0.03 + abs(d0));
+  vec3 trail1 = base * 0.10 / (0.06 + abs(d1));
+  vec3 trail2 = base * 0.05 / (0.10 + abs(d2));
+
+  col += glow + trail1 + trail2;
+
+  float logo = smoothstep(0.05, -0.01, d0);
+  float inner = smoothstep(0.02, -0.01, d0);
+
+  col = mix(col, vec3(1.0), logo);
+  col += base * inner * 0.35;
+
+  float vignette = uv.x * uv.y * (1.0 - uv.x) * (1.0 - uv.y);
+  col *= 0.65 + 2.2 * pow(vignette, 0.32);
+
+  col = pow(col, vec3(0.85));
+  gl_FragColor = vec4(col, 1.0);
 }
 `;
 
@@ -305,22 +170,6 @@ function createProgram(gl, vertexSource, fragmentSource) {
   return program;
 }
 
-function createNoiseTexture(gl, size = 256) {
-  const data = new Uint8Array(size * size * 4);
-  for (let i = 0; i < data.length; i++) {
-    data[i] = Math.floor(Math.random() * 256);
-  }
-  const tex = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, tex);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
-  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, size, size, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
-  return { texture: tex, width: size, height: size };
-}
-
 (function main() {
   const canvas = document.getElementById('glcanvas');
   const fallback = document.getElementById('fallback');
@@ -330,18 +179,10 @@ function createNoiseTexture(gl, size = 256) {
     depth: false,
     stencil: false,
     preserveDrawingBuffer: false,
-    powerPreference: 'high-performance'
+    powerPreference: 'low-power'
   }) || canvas.getContext('experimental-webgl');
 
   if (!gl) {
-    fallback.style.display = 'flex';
-    return;
-  }
-
-
-  const derivatives = gl.getExtension('OES_standard_derivatives');
-  if (!derivatives) {
-    fallback.textContent = 'WebGL derivative extension not available on this device.';
     fallback.style.display = 'flex';
     return;
   }
@@ -369,14 +210,9 @@ function createNoiseTexture(gl, size = 256) {
   const aPosition = gl.getAttribLocation(program, 'a_position');
   const uResolution = gl.getUniformLocation(program, 'iResolution');
   const uTime = gl.getUniformLocation(program, 'iTime');
-  const uChannel0 = gl.getUniformLocation(program, 'iChannel0');
-  const uChannelResolution0 = gl.getUniformLocation(program, 'iChannelResolution[0]');
-
-  const noise = createNoiseTexture(gl, 256);
 
   function resize() {
-    const dpr = 1; // FORCE LOW RES
-    //const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = 1;
     const width = Math.max(1, Math.floor(window.innerWidth * dpr));
     const height = Math.max(1, Math.floor(window.innerHeight * dpr));
     if (canvas.width !== width || canvas.height !== height) {
@@ -390,31 +226,24 @@ function createNoiseTexture(gl, size = 256) {
   resize();
 
   const start = performance.now();
-  
   let last = 0;
-  
-  function render(now) {
 
-    if (now - last < 50) { // ~30 FPS cap
-        requestAnimationFrame(render);
-        return;
+  function render(now) {
+    if (now - last < 40) {
+      requestAnimationFrame(render);
+      return;
     }
     last = now;
 
     resize();
-    gl.useProgram(program);
 
+    gl.useProgram(program);
     gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
     gl.enableVertexAttribArray(aPosition);
     gl.vertexAttribPointer(aPosition, 2, gl.FLOAT, false, 0, 0);
 
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, noise.texture);
-    gl.uniform1i(uChannel0, 0);
-
     gl.uniform3f(uResolution, canvas.width, canvas.height, 1.0);
     gl.uniform1f(uTime, (now - start) / 1000.0);
-    gl.uniform3f(uChannelResolution0, noise.width, noise.height, 1.0);
 
     gl.drawArrays(gl.TRIANGLES, 0, 6);
     requestAnimationFrame(render);
