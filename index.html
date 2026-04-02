@@ -390,8 +390,17 @@ function createNoiseTexture(gl, size = 256) {
   resize();
 
   const start = performance.now();
-
+  
+  let last = 0;
+  
   function render(now) {
+
+    if (now - last < 50) { // ~30 FPS cap
+        requestAnimationFrame(render);
+        return;
+    }
+    last = now;
+
     resize();
     gl.useProgram(program);
 
